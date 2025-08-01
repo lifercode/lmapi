@@ -5,7 +5,7 @@ import helmet from "helmet";
 import { pino } from "pino";
 
 import { env } from "@/constants/env";
-// import { connectSequelize } from "@/services/db/sequelize";
+import { connectMongoDB } from "@/services/db/mongodb";
 import { setupAppWebsocket } from "@/services/websocket";
 import router from "@/routes";
 
@@ -29,7 +29,7 @@ export const logger = pino({
 });
 
 export const startServer = async () => {
-	// await connectSequelize();
+	await connectMongoDB();
 	await setupAppWebsocket(server);
 
 	return server.listen(env.PORT, () => logger.info(serverMessage));

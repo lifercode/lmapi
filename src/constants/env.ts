@@ -8,6 +8,9 @@ const envSchema = z.object({
 	HOST: z.string(),
 	PORT: z.string().transform(Number),
 	MONGO_CONNECTION: z.string(),
+	MINIO_ENDPOINT: z.string(),
+	MINIO_ACCESS_KEY: z.string(),
+	MINIO_SECRET_KEY: z.string(),
 });
 
 export const env = envSchema.parse(process.env);
