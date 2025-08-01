@@ -71,6 +71,7 @@ export const uploadFile = async (req: Request, res: Response): Promise<void> => 
       const presignedUrl = await createPresignedUploadUrl(bucket, file.originalFileName);
       return {
         originalFileName: file.originalFileName,
+        publicUrl: `https://minio.lmtalk.com/atom/${file.originalFileName}`,
         presignedUrl
       };
     }));
