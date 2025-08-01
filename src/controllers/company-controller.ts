@@ -4,6 +4,7 @@ import { Company } from '@/models/Company';
 import { User } from '@/models/User';
 import { logger } from '@/server';
 import { Types } from 'mongoose';
+import { AuthenticatedRequest } from '@/middleware/auth';
 
 // Validation schema for notification
 const notificationSchema = z.object({
@@ -17,7 +18,7 @@ const notificationSchema = z.object({
   enabled: z.boolean().default(true)
 });
 
-// Validation schema for creating company
+// Validation schema for creating company (userId will be taken from JWT token)
 const createCompanySchema = z.object({
   name: z.string()
     .min(2, 'Company name must be at least 2 characters long')
@@ -35,34 +36,30 @@ const createCompanySchema = z.object({
     .trim(),
   brandColor: z.string()
     .regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Please provide a valid hex color (e.g., #FF5733 or #F57)')
-    .trim(),
-  userId: z.string()
-    .min(1, 'User ID is required')
-    .refine(val => Types.ObjectId.isValid(val), 'Invalid User ID format')
+    .trim()
 });
 
 // Validation schema for updating company
-const updateCompanySchema = createCompanySchema.partial().omit({ userId: true });
+const updateCompanySchema = createCompanySchema.partial();
 
-// Validation schema for query parameters
+// Validation schema for query parameters (removed userId as it comes from JWT)
 const getCompaniesQuerySchema = z.object({
   page: z.string().optional().transform(val => val ? parseInt(val) : 1),
   limit: z.string().optional().transform(val => val ? parseInt(val) : 10),
-  search: z.string().optional(),
-  userId: z.string().optional().refine(val => !val || Types.ObjectId.isValid(val), 'Invalid User ID format')
+  search: z.string().optional()
 });
 
-export const createCompany = async (req: Request, res: Response): Promise<void> => {
+export const createCompany = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     // Validate request body
     const validatedData = createCompanySchema.parse(req.body);
     
-    // Check if user exists
-    const userExists = await User.findById(validatedData.userId);
-    if (!userExists) {
-      res.status(404).json({
+    // Get user ID from JWT token
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
         success: false,
-        message: 'User not found'
+        message: 'User authentication required'
       });
       return;
     }
@@ -70,22 +67,25 @@ export const createCompany = async (req: Request, res: Response): Promise<void> 
     // Check if company with same name already exists for this user
     const existingCompany = await Company.findOne({ 
       name: validatedData.name, 
-      userId: validatedData.userId 
+      userId: userId 
     });
     if (existingCompany) {
       res.status(409).json({
         success: false,
-        message: 'Company with this name already exists for this user'
+        message: 'Company with this name already exists'
       });
       return;
     }
 
-    // Create new company
-    const company = new Company(validatedData);
+    // Create new company with authenticated user's ID
+    const company = new Company({
+      ...validatedData,
+      userId: userId
+    });
     const savedCompany = await company.save();
     await savedCompany.populate('userId', 'name email');
 
-    logger.info(`Company created successfully: ${savedCompany.name} for user ${validatedData.userId}`);
+    logger.info(`Company created successfully: ${savedCompany.name} for user ${userId}`);
 
     res.status(201).json({
       success: true,
@@ -121,17 +121,25 @@ export const createCompany = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-export const getCompanies = async (req: Request, res: Response): Promise<void> => {
+export const getCompanies = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     // Validate query parameters
-    const { page, limit, search, userId } = getCompaniesQuerySchema.parse(req.query);
+    const { page, limit, search } = getCompaniesQuerySchema.parse(req.query);
 
-    // Build search query
-    const searchQuery: any = {};
-    
-    if (userId) {
-      searchQuery.userId = userId;
+    // Get user ID from JWT token
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User authentication required'
+      });
+      return;
     }
+
+    // Build search query - always filter by authenticated user's ID
+    const searchQuery: any = {
+      userId: userId
+    };
 
     if (search) {
       searchQuery.name = { $regex: search, $options: 'i' };
@@ -140,7 +148,7 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
     // Calculate pagination
     const skip = (page - 1) * limit;
 
-    // Get companies with pagination
+    // Get companies with pagination (only user's own companies)
     const [companies, totalCompanies] = await Promise.all([
       Company.find(searchQuery)
         .populate('userId', 'name email')
@@ -153,7 +161,7 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
 
     const totalPages = Math.ceil(totalCompanies / limit);
 
-    logger.info(`Retrieved ${companies.length} companies (page ${page}/${totalPages})`);
+    logger.info(`Retrieved ${companies.length} companies for user ${userId} (page ${page}/${totalPages})`);
 
     res.status(200).json({
       success: true,
@@ -200,9 +208,19 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-export const getCompanyById = async (req: Request, res: Response): Promise<void> => {
+export const getCompanyById = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+
+    // Get user ID from JWT token
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User authentication required'
+      });
+      return;
+    }
 
     // Validate ObjectId format
     if (!Types.ObjectId.isValid(id)) {
@@ -213,18 +231,21 @@ export const getCompanyById = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Find company by ID
-    const company = await Company.findById(id).populate('userId', 'name email');
+    // Find company by ID and ensure it belongs to the authenticated user
+    const company = await Company.findOne({ 
+      _id: id, 
+      userId: userId 
+    }).populate('userId', 'name email');
     
     if (!company) {
       res.status(404).json({
         success: false,
-        message: 'Company not found'
+        message: 'Company not found or access denied'
       });
       return;
     }
 
-    logger.info(`Retrieved company: ${company.name}`);
+    logger.info(`Retrieved company: ${company.name} for user ${userId}`);
 
     res.status(200).json({
       success: true,
@@ -249,9 +270,19 @@ export const getCompanyById = async (req: Request, res: Response): Promise<void>
   }
 };
 
-export const updateCompany = async (req: Request, res: Response): Promise<void> => {
+export const updateCompany = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+
+    // Get user ID from JWT token
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User authentication required'
+      });
+      return;
+    }
 
     // Validate ObjectId format
     if (!Types.ObjectId.isValid(id)) {
@@ -265,9 +296,9 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
     // Validate request body
     const validatedData = updateCompanySchema.parse(req.body);
 
-    // Find and update company
-    const updatedCompany = await Company.findByIdAndUpdate(
-      id,
+    // Find and update company only if it belongs to the authenticated user
+    const updatedCompany = await Company.findOneAndUpdate(
+      { _id: id, userId: userId },
       validatedData,
       { new: true, runValidators: true }
     ).populate('userId', 'name email');
@@ -275,12 +306,12 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
     if (!updatedCompany) {
       res.status(404).json({
         success: false,
-        message: 'Company not found'
+        message: 'Company not found or access denied'
       });
       return;
     }
 
-    logger.info(`Company updated successfully: ${updatedCompany.name}`);
+    logger.info(`Company updated successfully: ${updatedCompany.name} for user ${userId}`);
 
     res.status(200).json({
       success: true,
@@ -317,9 +348,19 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-export const deleteCompany = async (req: Request, res: Response): Promise<void> => {
+export const deleteCompany = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+
+    // Get user ID from JWT token
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User authentication required'
+      });
+      return;
+    }
 
     // Validate ObjectId format
     if (!Types.ObjectId.isValid(id)) {
@@ -330,18 +371,21 @@ export const deleteCompany = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Find and delete company
-    const deletedCompany = await Company.findByIdAndDelete(id);
+    // Find and delete company only if it belongs to the authenticated user
+    const deletedCompany = await Company.findOneAndDelete({ 
+      _id: id, 
+      userId: userId 
+    });
 
     if (!deletedCompany) {
       res.status(404).json({
         success: false,
-        message: 'Company not found'
+        message: 'Company not found or access denied'
       });
       return;
     }
 
-    logger.info(`Company deleted successfully: ${deletedCompany.name}`);
+    logger.info(`Company deleted successfully: ${deletedCompany.name} for user ${userId}`);
 
     res.status(200).json({
       success: true,

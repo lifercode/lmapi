@@ -11,6 +11,7 @@ const envSchema = z.object({
 	MINIO_ENDPOINT: z.string(),
 	MINIO_ACCESS_KEY: z.string(),
 	MINIO_SECRET_KEY: z.string(),
+	JWT_SECRET: z.string(),
 });
 
 export const env = envSchema.parse(process.env);
