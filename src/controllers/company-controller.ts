@@ -8,13 +8,14 @@ import { AuthenticatedRequest } from '@/middleware/auth';
 
 // Validation schema for notification
 const notificationSchema = z.object({
-  provider: z.enum(['email', 'sms', 'slack', 'webhook'], {
-    errorMap: () => ({ message: 'Provider must be one of: email, sms, slack, webhook' })
+  provider: z.enum(['email', 'sms', 'whatsapp'], {
+    errorMap: () => ({ message: 'Provider must be one of: email, sms, whatsapp' })
   }),
   value: z.string()
-    .min(1, 'Notification value is required')
     .max(255, 'Notification value cannot exceed 255 characters')
-    .trim(),
+    .trim()
+    .nullable()
+    .optional(),
   enabled: z.boolean().default(true)
 });
 

@@ -2,7 +2,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface INotification {
   provider: 'email' | 'sms' | 'slack' | 'webhook';
-  value: string;
+  value: string | null;
   enabled: boolean;
 }
 
@@ -20,16 +20,17 @@ const NotificationSchema = new Schema({
   provider: {
     type: String,
     enum: {
-      values: ['email', 'sms', 'slack', 'webhook'],
-      message: 'Provider must be one of: email, sms, slack, webhook'
+      values: ['email', 'sms', 'whatsapp'],
+      message: 'Provider must be one of: email, sms, whatsapp'
     },
     required: [true, 'Notification provider is required']
   },
   value: {
     type: String,
-    required: [true, 'Notification value is required'],
+    required: false,
     trim: true,
-    maxlength: [255, 'Notification value cannot exceed 255 characters']
+    maxlength: [255, 'Notification value cannot exceed 255 characters'],
+    default: null
   },
   enabled: {
     type: Boolean,
